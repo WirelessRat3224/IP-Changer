@@ -1,0 +1,268 @@
+git clone https://github.com/gr33n37/gr33n37-ip-changer.git
+
+cd gr33n37-ip-changer
+
+sudo ./ip-changer.sh
+
+
+
+
+
+
+
+
+
+
+
+
+This script is a Bash script that facilitates changing the public IP address of the system by interacting with the Tor network. The script does the following:
+
+1. **Checks if the script is run as root**: 
+   The script starts by ensuring that it is being run by the root user. If the `$UID` is not 0 (which is the user ID for root), the script will display an error message and exit.
+
+   ```bash
+   [[ "$UID" -ne 0 ]] && {
+       echo "Script must be run as root."
+       exit 1
+   }
+   ```
+
+   **Explanation**: `"$UID"` represents the current user's ID. If it's not equal to `0` (root), it will print the message and stop execution.
+
+2. **Define the `install_packages` function**:
+   The script defines a function called `install_packages`. This function detects the Linux distribution being used (such as Ubuntu, Fedora, etc.) and installs `curl` and `tor` based on the detected distribution. These are needed for checking the IP and changing it through the Tor network.
+
+   ```bash
+   install_packages() {
+       local distro
+       distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
+       distro=${distro//\"/}
+       
+       case "$distro" in
+           *"Ubuntu"* | *"Debian"*)
+               apt-get update
+               apt-get install -y curl tor
+               ;;
+           *"Fedora"* | *"CentOS"* | *"Red Hat"* | *"Amazon Linux"*)
+               yum update
+               yum install -y curl tor
+               ;;
+           *"Arch"*)
+               pacman -S --noconfirm curl tor
+               ;;
+           *)
+               echo "Unsupported distribution: $distro. Please install curl and tor manually."
+               exit 1
+               ;;
+       esac
+   }
+   ```
+
+   **Explanation**: 
+   - The script uses `awk` to fetch the name of the Linux distribution from `/etc/os-release`.
+   - Based on the name of the distribution, it uses the appropriate package manager (`apt-get` for Debian/Ubuntu, `yum` for Fedora/CentOS/Red Hat, `pacman` for Arch) to install `curl` and `tor`.
+   - If the script detects an unsupported distribution, it prints an error and exits.
+
+3. **Check if `curl` and `tor` are installed**:
+   After defining the installation function, the script checks whether `curl` and `tor` are already installed. If not, it calls the `install_packages` function to install them.
+
+   ```bash
+   if ! command -v curl &> /dev/null || ! command -v tor &> /dev/null; then
+       echo "Installing curl and tor"
+       install_packages
+   fi
+   ```
+
+   **Explanation**: 
+   - The script uses `command -v` to check if `curl` and `tor` are available.
+   - If either is missing, it installs them by calling `install_packages`.
+
+4. **Start the Tor service**:
+   The script then checks whether the Tor service is active. If not, it starts the Tor service using `systemctl`.
+
+   ```bash
+   if ! systemctl --quiet is-active tor.service; then
+       echo "Starting tor service"
+       systemctl start tor.service
+   fi
+   ```
+
+   **Explanation**: 
+   - It checks if the Tor service is running with `systemctl --quiet is-active tor.service`.
+   - If Tor is not running, it starts the service with `systemctl start tor.service`.
+
+5. **Define the `get_ip` function**:
+   This function retrieves the public IP address as seen by the internet after routing through Tor. It uses the `checkip.amazonaws.com` service to check the IP address over the Tor network by specifying the `socks5h://127.0.0.1:9050` proxy (the default Tor SOCKS proxy).
+
+   ```bash
+   get_ip() {
+       local url get_ip ip
+       url="https://checkip.amazonaws.com"
+       get_ip=$(curl -s -x socks5h://127.0.0.1:9050 "$url")
+       ip=$(echo "$get_ip" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}')
+       echo "$ip"
+   }
+   ```
+
+   **Explanation**: 
+   - The function uses `curl` to fetch the IP address routed through the Tor network.
+   - The IP address is extracted from the response using `grep` with a regular expression (`\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`) that matches an IPv4 address format.
+
+6. **Define the `change_ip` function**:
+   This function reloads the Tor service to change the IP address and then displays the new IP address.
+
+   ```bash
+   change_ip() {
+       echo "Reloading tor service"
+       systemctl reload tor.service
+       echo -e "\033[34mNew IP address: $(get_ip)\033[0m"
+   }
+   ```
+
+   **Explanation**: 
+   - It reloads the Tor service using `systemctl reload tor.service` to initiate a new connection and change the IP.
+   - Then it fetches and prints the new IP address, formatting the output with colors (`\033[34m` for blue).
+
+7. **Display an ASCII art header**:
+   The script prints an ASCII art header when it's executed.
+
+   ```bash
+   clear
+   cat << EOF
+   ... (ASCII art)
+   EOF
+   ```
+
+   **Explanation**: 
+   - This part just clears the terminal and then prints the ASCII art header.
+
+8. **Main loop for IP change interval and count**:
+   The script asks the user for two inputs: 
+   - The time interval (in seconds) between each IP change.
+   - The number of times the IP should be changed.
+
+   If the user enters `0` for either value, the script will keep changing the IP address infinitely (until the script is manually stopped).
+
+   ```bash
+   while true; do
+       read -rp $'\033[34mEnter time interval in seconds (type 0 for infinite IP changes): \033[0m' interval
+       read -rp $'\033[34mEnter number of times to change IP address (type 0 for infinite IP changes): \033[0m' times
+       
+       if [ "$interval" -eq "0" ] || [ "$times" -eq "0" ]; then
+           echo "Starting infinite IP changes"
+           while true; do
+               change_ip
+               interval=$(shuf -i 10-20 -n 1)
+               sleep "$interval"
+           done
+       else
+           for ((i=0; i< times; i++)); do
+               change_ip
+               sleep "$interval"
+           done
+       fi
+   done
+   ```
+
+   **Explanation**: 
+   - The script continuously asks for two inputs: the interval between IP changes and the number of times to change the IP.
+   - If the user sets `0` for either, the script enters an infinite loop where it randomly changes the IP every 10–20 seconds (chosen randomly with `shuf -i 10-20 -n 1`).
+   - If the user provides a non-zero number, the script will change the IP that many times with the specified interval between changes.
+
+### Summary:
+
+- The script allows the user to change their IP address by using the Tor network, either infinitely or a specified number of times.
+- It installs necessary packages (if not already installed), checks that the Tor service is running, and then allows the user to change the IP address repeatedly with a configurable interval.
+
+
+
+
+
+
+
+
+####CODE
+
+#!/bin/bash
+
+[[ "$UID" -ne 0 ]] && {
+    echo "Script must be run as root."
+    exit 1
+}
+
+install_packages() {
+    local distro
+    distro=$(awk -F= '/^NAME/{print $2}' /etc/os-release)
+    distro=${distro//\"/}
+    
+    case "$distro" in
+        *"Ubuntu"* | *"Debian"*)
+            apt-get update
+            apt-get install -y curl tor
+            ;;
+        *"Fedora"* | *"CentOS"* | *"Red Hat"* | *"Amazon Linux"*)
+            yum update
+            yum install -y curl tor
+            ;;
+        *"Arch"*)
+            pacman -S --noconfirm curl tor
+            ;;
+        *)
+            echo "Unsupported distribution: $distro. Please install curl and tor manually."
+            exit 1
+            ;;
+    esac
+}
+
+if ! command -v curl &> /dev/null || ! command -v tor &> /dev/null; then
+    echo "Installing curl and tor"
+    install_packages
+fi
+
+if ! systemctl --quiet is-active tor.service; then
+    echo "Starting tor service"
+    systemctl start tor.service
+fi
+
+get_ip() {
+    local url get_ip ip
+    url="https://checkip.amazonaws.com"
+    get_ip=$(curl -s -x socks5h://127.0.0.1:9050 "$url")
+    ip=$(echo "$get_ip" | grep -oP '\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}')
+    echo "$ip"
+}
+
+change_ip() {
+    echo "Reloading tor service"
+    systemctl reload tor.service
+    echo -e "\033[34mNew IP address: $(get_ip)\033[0m"
+}
+
+clear
+cat << EOF
+   ____ ____  __________ _   _ __________   ___ ____        ____ _   _    _    _   _  ____ _____ ____  
+  / ___|  _ \|___ /___ /| \ | |___ /___  | |_ _|  _ \      / ___| | | |  / \  | \ | |/ ___| ____|  _ \ 
+ | |  _| |_) | |_ \ |_ \|  \| | |_ \  / /   | || |_) |____| |   | |_| | / _ \ |  \| | |  _|  _| | |_) |
+ | |_| |  _ < ___) |__) | |\  |___) |/ /    | ||  __/_____| |___|  _  |/ ___ \| |\  | |_| | |___|  _ < 
+  \____|_| \_\____/____/|_| \_|____//_/    |___|_|         \____|_| |_/_/   \_\_| \_|\____|_____|_| \_\
+                                                                                                       
+EOF
+
+while true; do
+    read -rp $'\033[34mEnter time interval in seconds (type 0 for infinite IP changes): \033[0m' interval
+    read -rp $'\033[34mEnter number of times to change IP address (type 0 for infinite IP changes): \033[0m' times
+
+    if [ "$interval" -eq "0" ] || [ "$times" -eq "0" ]; then
+        echo "Starting infinite IP changes"
+        while true; do
+            change_ip
+            interval=$(shuf -i 10-20 -n 1)
+            sleep "$interval"
+        done
+    else
+        for ((i=0; i< times; i++)); do
+            change_ip
+            sleep "$interval"
+        done
+    fi
+done
